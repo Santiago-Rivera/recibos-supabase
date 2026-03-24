@@ -1,15 +1,186 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import Papa from 'papaparse'
+import * as XLSX from 'xlsx'
+import * as mammoth from 'mammoth'
+import * as pdfjsLib from 'pdfjs-dist'
+import { jsPDF } from 'jspdf'
+import 'jspdf-autotable'
+import { Document, Packer, Table, TableRow, TableCell, TextRun, convertInchesToTwip } from 'docx'
+import { saveAs } from 'file-saver'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
 
 export default function ClientesPage({ user, onToast }) {
+  const fileInputRef = useRef(null)
   const [clientes, setClientes]   = useState([])
   const [loading, setLoading]     = useState(true)
   const [busqueda, setBusqueda]   = useState('')
-  const [modal, setModal]         = useState(null) // null | 'nuevo' | { cliente }
+  const [modal, setModal]         = useState(null) // null | 'nuevo' | 'importar' | 'exportar' | { cliente }
   const [saving, setSaving]       = useState(false)
   const [form, setForm]           = useState({ nombre: '', telefono: '', direccion: '', cedula: '' })
+  const [importData, setImportData] = useState(null)
+  const [columnMapping, setColumnMapping] = useState({})
+  const [importingRows, setImportingRows] = useState(false)
+  const [exportando, setExportando] = useState(false)
 
   useEffect(() => { cargarClientes() }, [])
+
+  const parseCSV = (file) => {
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        skipEmptyLines: true,
+        complete: (results) => {
+          resolve(results.data)
+        },
+        error: (error) => reject(error)
+      })
+    })
+  }
+
+  const parseXLSX = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result)
+          const workbook = XLSX.read(data, { type: 'array' })
+          const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+          const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
+          resolve(rows)
+        } catch (error) {
+          reject(error)
+        }
+      }
+      reader.onerror = () => reject(new Error('Error al leer archivo'))
+      reader.readAsArrayBuffer(file)
+    })
+  }
+
+  const parseWord = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = async (e) => {
+        try {
+          const result = await mammoth.extractRawText({ arrayBuffer: e.target.result })
+          // Parsear tabla simple del Word
+          const lines = result.value.split('\n').filter(l => l.trim())
+          const rows = lines.map(line => 
+            line.split('\t').map(cell => cell.trim()).filter(c => c)
+          )
+          resolve(rows)
+        } catch (error) {
+          reject(error)
+        }
+      }
+      reader.onerror = () => reject(new Error('Error al leer archivo'))
+      reader.readAsArrayBuffer(file)
+    })
+  }
+
+  const parsePDF = async (file) => {
+    const arrayBuffer = await file.arrayBuffer()
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+    const rows = []
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i)
+      const content = await page.getTextContent()
+      const pageText = content.items.map(item => item.str).join(' ')
+      
+      // Buscar patrones comunes (nombre, teléfono, cédula)
+      const lines = pageText.split(/[\n|•\-]/).filter(l => l.trim())
+      rows.push(...lines)
+    }
+    
+    return rows.map(r => [r.trim()])
+  }
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    try {
+      let rows = []
+      const ext = file.name.split('.').pop().toLowerCase()
+
+      if (ext === 'csv') {
+        rows = await parseCSV(file)
+      } else if (['xlsx', 'xls'].includes(ext)) {
+        rows = await parseXLSX(file)
+      } else if (ext === 'docx') {
+        rows = await parseWord(file)
+      } else if (ext === 'pdf') {
+        rows = await parsePDF(file)
+      } else {
+        onToast('Formato de archivo no soportado', 'error')
+        return
+      }
+
+      if (rows.length === 0) {
+        onToast('El archivo no contiene datos', 'error')
+        return
+      }
+
+      setImportData({ rows, fileName: file.name })
+      setModal('importar')
+      
+      // Auto-mapeo de columnas por coincidencia de nombre
+      const firstRow = rows[0] || []
+      const mapping = {}
+      const headers = ['Nombre', 'nombre', 'Name', 'Cliente', 'cliente', 'Teléfono', 'telefono', 'Phone', 'Cédula', 'cedula', 'DNI', 'Dirección', 'direccion', 'Address']
+      
+      firstRow.forEach((col, idx) => {
+        const colStr = String(col).toLowerCase()
+        if (colStr.includes('nombre') || colStr === 'name' || colStr === 'cliente') mapping[idx] = 'nombre'
+        else if (colStr.includes('telefono') || colStr === 'phone' || colStr.includes('teléfono')) mapping[idx] = 'telefono'
+        else if (colStr.includes('cedula') || colStr === 'dni') mapping[idx] = 'cedula'
+        else if (colStr.includes('direccion') || colStr === 'address') mapping[idx] = 'direccion'
+      })
+      
+      setColumnMapping(mapping)
+    } catch (error) {
+      console.error(error)
+      onToast('Error al leer archivo: ' + error.message, 'error')
+    }
+    
+    e.target.value = ''
+  }
+
+  const guardarImportados = async () => {
+    if (!importData || Object.keys(columnMapping).length === 0) return
+    
+    setImportingRows(true)
+    const { rows } = importData
+    let importados = 0
+    let errores = 0
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
+      const cliente = {
+        nombre: '',
+        telefono: '',
+        cedula: '',
+        direccion: '',
+        user_id: user.id
+      }
+
+      Object.entries(columnMapping).forEach(([colIdx, field]) => {
+        if (row[colIdx]) cliente[field] = String(row[colIdx]).trim()
+      })
+
+      if (!cliente.nombre) continue
+
+      const { error } = await supabase.from('clientes').insert(cliente)
+      if (error) errores++
+      else importados++
+    }
+
+    setImportingRows(false)
+    onToast(`Importados: ${importados}, Errores: ${errores}`, importados > 0 ? 'success' : 'error')
+    cargarClientes()
+    cerrar()
+  }
 
   const cargarClientes = async () => {
     setLoading(true)
@@ -25,6 +196,171 @@ export default function ClientesPage({ user, onToast }) {
   const abrirNuevo = () => {
     setForm({ nombre: '', telefono: '', direccion: '', cedula: '' })
     setModal('nuevo')
+  }
+
+  const abrirImportar = () => {
+    fileInputRef.current?.click()
+  }
+
+  const abrirExportar = () => {
+    setModal('exportar')
+  }
+
+  const exportarCSV = () => {
+    setExportando(true)
+    try {
+      const csv = Papa.unparse(clientes.map(c => ({
+        Nombre: c.nombre,
+        Teléfono: c.telefono || '',
+        Cédula: c.cedula || '',
+        Dirección: c.direccion || ''
+      })))
+      
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      saveAs(blob, `clientes_${new Date().toISOString().split('T')[0]}.csv`)
+      onToast('Clientes exportados a CSV', 'success')
+    } catch (error) {
+      onToast('Error al exportar CSV', 'error')
+    }
+    setExportando(false)
+    cerrar()
+  }
+
+  const exportarExcel = () => {
+    setExportando(true)
+    try {
+      const ws = XLSX.utils.json_to_sheet(clientes.map(c => ({
+        Nombre: c.nombre,
+        Teléfono: c.telefono || '',
+        Cédula: c.cedula || '',
+        Dirección: c.direccion || ''
+      })))
+      
+      ws['!cols'] = [
+        { wch: 25 },
+        { wch: 15 },
+        { wch: 15 },
+        { wch: 30 }
+      ]
+      
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Clientes')
+      XLSX.writeFile(wb, `clientes_${new Date().toISOString().split('T')[0]}.xlsx`)
+      onToast('Clientes exportados a Excel', 'success')
+    } catch (error) {
+      onToast('Error al exportar Excel', 'error')
+    }
+    setExportando(false)
+    cerrar()
+  }
+
+  const exportarPDF = () => {
+    setExportando(true)
+    try {
+      const doc = new jsPDF()
+      const tableColumn = ['Nombre', 'Teléfono', 'Cédula', 'Dirección']
+      const tableRows = clientes.map(c => [
+        c.nombre,
+        c.telefono || '',
+        c.cedula || '',
+        c.direccion || ''
+      ])
+
+      doc.autoTable({
+        head: [tableColumn],
+        body: tableRows,
+        startY: 10,
+        theme: 'grid',
+        styles: { fontSize: 10, cellPadding: 4 },
+        headStyles: { fillColor: [51, 102, 77], textColor: 255, fontStyle: 'bold' },
+        margin: { top: 10 }
+      })
+
+      doc.text('Registro de Clientes', 10, 10)
+      doc.save(`clientes_${new Date().toISOString().split('T')[0]}.pdf`)
+      onToast('Clientes exportados a PDF', 'success')
+    } catch (error) {
+      onToast('Error al exportar PDF', 'error')
+    }
+    setExportando(false)
+    cerrar()
+  }
+
+  const exportarWord = async () => {
+    setExportando(true)
+    try {
+      const rows = clientes.map(c => 
+        new TableRow({
+          children: [
+            new TableCell({
+              children: [new TextRun(c.nombre || '')],
+              width: { size: 2000, type: 'dxa' }
+            }),
+            new TableCell({
+              children: [new TextRun(c.telefono || '')],
+              width: { size: 1500, type: 'dxa' }
+            }),
+            new TableCell({
+              children: [new TextRun(c.cedula || '')],
+              width: { size: 1500, type: 'dxa' }
+            }),
+            new TableCell({
+              children: [new TextRun(c.direccion || '')],
+              width: { size: 2000, type: 'dxa' }
+            })
+          ]
+        })
+      )
+
+      const table = new Table({
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                children: [new TextRun({text: 'Nombre', bold: true})],
+                width: { size: 2000, type: 'dxa' }
+              }),
+              new TableCell({
+                children: [new TextRun({text: 'Teléfono', bold: true})],
+                width: { size: 1500, type: 'dxa' }
+              }),
+              new TableCell({
+                children: [new TextRun({text: 'Cédula', bold: true})],
+                width: { size: 1500, type: 'dxa' }
+              }),
+              new TableCell({
+                children: [new TextRun({text: 'Dirección', bold: true})],
+                width: { size: 2000, type: 'dxa' }
+              })
+            ]
+          }),
+          ...rows
+        ]
+      })
+
+      const doc = new Document({
+        sections: [{
+          children: [
+            new (require('docx').Paragraph)({
+              text: 'Registro de Clientes',
+              bold: true,
+              size: 24
+            }),
+            new (require('docx').Paragraph)({ text: '' }),
+            table
+          ]
+        }]
+      })
+
+      const blob = await Packer.toBlob(doc)
+      saveAs(blob, `clientes_${new Date().toISOString().split('T')[0]}.docx`)
+      onToast('Clientes exportados a Word', 'success')
+    } catch (error) {
+      console.error(error)
+      onToast('Error al exportar Word', 'error')
+    }
+    setExportando(false)
+    cerrar()
   }
 
   const abrirEditar = (c) => {
@@ -84,10 +420,20 @@ export default function ClientesPage({ user, onToast }) {
           <h1>Clientes</h1>
           <p>{clientes.length} cliente{clientes.length !== 1 ? 's' : ''} registrado{clientes.length !== 1 ? 's' : ''}</p>
         </div>
-        <button className="btn btn-primary" style={{width:'auto'}} onClick={abrirNuevo}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
-          Nuevo cliente
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" style={{width:'auto'}} onClick={abrirExportar} disabled={clientes.length === 0}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar clientes
+          </button>
+          <button className="btn btn-primary" style={{width:'auto'}} onClick={abrirImportar}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Importar clientes
+          </button>
+          <button className="btn btn-primary" style={{width:'auto'}} onClick={abrirNuevo}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+            Nuevo cliente
+          </button>
+        </div>
       </div>
 
       <div className="search-wrapper">
@@ -154,7 +500,15 @@ export default function ClientesPage({ user, onToast }) {
       </div>
 
       {/* Modal */}
-      {modal && (
+      <input 
+        ref={fileInputRef} 
+        type="file" 
+        accept=".csv,.xlsx,.xls,.docx,.pdf"
+        onChange={handleFileSelect}
+        style={{ display: 'none' }}
+      />
+      
+      {modal && modal !== 'importar' && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && cerrar()}>
           <div className="modal">
             <h2 className="modal-title">{modal === 'nuevo' ? 'Nuevo cliente' : 'Editar cliente'}</h2>
@@ -184,6 +538,147 @@ export default function ClientesPage({ user, onToast }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Importación */}
+      {modal === 'importar' && importData && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && cerrar()}>
+          <div className="modal" style={{ maxWidth: '800px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <h2 className="modal-title">Importar clientes desde {importData.fileName}</h2>
+            
+            <p style={{ marginBottom: 16, opacity: 0.8 }}>
+              Mapea las columnas del archivo con los campos de clientes:
+            </p>
+
+            <div style={{ backgroundColor: 'var(--surface-2)', padding: 16, borderRadius: 8, marginBottom: 20, overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr>
+                    {importData.rows[0]?.map((col, idx) => (
+                      <th key={idx} style={{ padding: 8, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                        <select 
+                          value={columnMapping[idx] || ''}
+                          onChange={(e) => {
+                            const newMapping = { ...columnMapping }
+                            if (e.target.value) newMapping[idx] = e.target.value
+                            else delete newMapping[idx]
+                            setColumnMapping(newMapping)
+                          }}
+                          style={{
+                            padding: 4,
+                            borderRadius: 4,
+                            border: '1px solid var(--border)',
+                            fontSize: 'inherit',
+                            width: '100%'
+                          }}
+                        >
+                          <option value="">— Sin mapear</option>
+                          <option value="nombre">Nombre *</option>
+                          <option value="telefono">Teléfono</option>
+                          <option value="cedula">Cédula</option>
+                          <option value="direccion">Dirección</option>
+                        </select>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importData.rows.slice(1, 6).map((row, rowIdx) => (
+                    <tr key={rowIdx}>
+                      {row.map((cell, cellIdx) => (
+                        <td key={cellIdx} style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
+                          {String(cell || '').substring(0, 30)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {importData.rows.length > 6 && (
+                <p style={{ marginTop: 8, opacity: 0.6, fontSize: '0.8rem' }}>
+                  ... y {importData.rows.length - 6} filas más
+                </p>
+              )}
+            </div>
+
+            <div style={{ 
+              padding: 12, 
+              backgroundColor: 'var(--surface-2)', 
+              borderRadius: 8, 
+              marginBottom: 20,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center'
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span style={{ fontSize: '0.9rem' }}>
+                Se importarán {importData.rows.length - 1} cliente{importData.rows.length - 1 !== 1 ? 's' : ''}
+              </span>
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={cerrar} disabled={importingRows}>
+                Cancelar
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-primary" 
+                style={{width:'auto'}}
+                onClick={guardarImportados}
+                disabled={importingRows || Object.keys(columnMapping).length === 0}
+              >
+                {importingRows ? <span className="spinner" /> : 'Importar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Exportación */}
+      {modal === 'exportar' && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && cerrar()}>
+          <div className="modal">
+            <h2 className="modal-title">Exportar clientes</h2>
+            
+            <p style={{ marginBottom: 20, opacity: 0.8 }}>
+              Elige el formato en que deseas exportar tus {clientes.length} cliente{clientes.length !== 1 ? 's' : ''}:
+            </p>
+
+            <div style={{ display: 'grid', gap: 12, marginBottom: 20 }}>
+              <button 
+                className="btn btn-primary" 
+                style={{ width: '100%', padding: 12, display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={exportarCSV}
+                disabled={exportando}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>
+                </svg>
+                Exportar como CSV
+              </button>
+
+              <button 
+                className="btn btn-primary" 
+                style={{ width: '100%', padding: 12, display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={exportarExcel}
+                disabled={exportando}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>
+                </svg>
+                Exportar como Excel
+              </button>
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={cerrar} disabled={exportando}>
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
