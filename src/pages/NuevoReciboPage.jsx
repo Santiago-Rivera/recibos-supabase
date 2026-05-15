@@ -70,7 +70,7 @@ export default function NuevoReciboPage({ user, onToast }) {
       setSearching(false)
     }, 280)
     return () => clearTimeout(t)
-  }, [busqueda])
+  }, [busqueda, user.id])
 
   const seleccionarCliente = (c) => {
     setCliente(c)
@@ -176,30 +176,30 @@ export default function NuevoReciboPage({ user, onToast }) {
     const serial = serialManual
     const datos  = { ...form, serial, cliente: clienteSeleccionado.nombre, clienteId: clienteSeleccionado.id }
 
-    // Guardar en Supabase
-    const { error } = await supabase.from('recibos').insert({
-      user_id:            user.id,
-      cliente_id:         clienteSeleccionado.id,
-      serial,
-      empresa:            form.empresa,
-      fecha_emision:      form.fechaEmision,
-      saldo_anterior:     form.saldoAnterior,
-      abono:              form.abono,
-      saldo_actual:       form.saldoActual,
-      proximo_cobro:      form.proximoCobro,
-      numero_cuotas:      form.numeroCuotas,
+    // Guardar en Supabase - Desactivado temporalmente
+    // const { error } = await supabase.from('recibos').insert({
+    //   user_id:            user.id,
+    //   cliente_id:         clienteSeleccionado.id,
+    //   serial,
+    //   empresa:            form.empresa,
+    //   fecha_emision:      form.fechaEmision,
+    //   saldo_anterior:     form.saldoAnterior,
+    //   abono:              form.abono,
+    //   saldo_actual:       form.saldoActual,
+    //   proximo_cobro:      form.proximoCobro,
+    //   numero_cuotas:      form.numeroCuotas,
       obra:               form.obra,
-      banco:              form.banco,
-      numero_transaccion: form.numeroTransaccion,
-      fecha_pago:         form.fechaPago,
-      cobrador:           form.cobrador,
-    })
+    //  banco:              form.banco,
+    //  numero_transaccion: form.numeroTransaccion,
+    // fecha_pago:         form.fechaPago,
+    // cobrador:           form.cobrador,
+    //})
 
-    if (error) {
-      onToast('Error al guardar el recibo', 'error')
-      setSaving(false)
-      return
-    }
+    //if (error) {
+    //  onToast('Error al guardar el recibo', 'error')
+    //  setSaving(false)
+    //  return
+    //}
 
     onToast(`Recibo ${serial} guardado`, 'success')
     setRecibo(datos)

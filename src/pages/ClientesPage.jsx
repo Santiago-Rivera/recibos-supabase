@@ -24,7 +24,11 @@ export default function ClientesPage({ user, onToast }) {
   const [importingRows, setImportingRows] = useState(false)
   const [exportando, setExportando] = useState(false)
 
-  useEffect(() => { cargarClientes() }, [])
+  useEffect(() => { 
+    if (user?.id) {
+      cargarClientes()
+    }
+  }, [user?.id])
 
   const parseCSV = (file) => {
     return new Promise((resolve, reject) => {
@@ -407,11 +411,16 @@ export default function ClientesPage({ user, onToast }) {
     else { onToast('Cliente eliminado'); cargarClientes() }
   }
 
-  const filtrados = clientes.filter(c =>
-    c.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    (c.telefono || '').includes(busqueda) ||
-    (c.cedula || '').includes(busqueda)
-  )
+  const filtrados = clientes.filter(c => {
+    if (!busqueda.trim()) return true
+    const busquedaLower = busqueda.toLowerCase().trim()
+    return (
+      (c.nombre || '').toLowerCase().includes(busquedaLower) ||
+      (c.telefono || '').toLowerCase().includes(busquedaLower) ||
+      (c.cedula || '').toLowerCase().includes(busquedaLower) ||
+      (c.direccion || '').toLowerCase().includes(busquedaLower)
+    )
+  })
 
   return (
     <div>
