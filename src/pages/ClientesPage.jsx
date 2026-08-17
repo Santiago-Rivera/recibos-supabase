@@ -135,11 +135,11 @@ export default function ClientesPage({ user, onToast }) {
       const headers = ['Nombre', 'nombre', 'Name', 'Cliente', 'cliente', 'Teléfono', 'telefono', 'Phone', 'Cédula', 'cedula', 'DNI', 'Dirección', 'direccion', 'Address']
       
       firstRow.forEach((col, idx) => {
-        const colStr = String(col).toLowerCase()
-        if (colStr.includes('nombre') || colStr === 'name' || colStr === 'cliente') mapping[idx] = 'nombre'
-        else if (colStr.includes('telefono') || colStr === 'phone' || colStr.includes('teléfono')) mapping[idx] = 'telefono'
-        else if (colStr.includes('cedula') || colStr === 'dni') mapping[idx] = 'cedula'
-        else if (colStr.includes('direccion') || colStr === 'address') mapping[idx] = 'direccion'
+        const colStr = String(col).toLowerCase().trim()
+        if (colStr.includes('nombre') || colStr.includes('name') || colStr.includes('cliente')) mapping[idx] = 'nombre'
+        else if (colStr.includes('telefono') || colStr.includes('phone') || colStr.includes('teléfono') || colStr.includes('celular')) mapping[idx] = 'telefono'
+        else if (colStr.includes('cedula') || colStr.includes('dni') || colStr.includes('cédula')) mapping[idx] = 'cedula'
+        else if (colStr.includes('direccion') || colStr.includes('address') || colStr.includes('dirección')) mapping[idx] = 'direccion'
         else if (colStr.includes('pedido') || colStr.includes('order')) mapping[idx] = 'numero_pedido'
       })
       
