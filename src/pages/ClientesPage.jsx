@@ -140,6 +140,7 @@ export default function ClientesPage({ user, onToast }) {
         else if (colStr.includes('telefono') || colStr === 'phone' || colStr.includes('teléfono')) mapping[idx] = 'telefono'
         else if (colStr.includes('cedula') || colStr === 'dni') mapping[idx] = 'cedula'
         else if (colStr.includes('direccion') || colStr === 'address') mapping[idx] = 'direccion'
+        else if (colStr.includes('pedido') || colStr.includes('order')) mapping[idx] = 'numero_pedido'
       })
       
       setColumnMapping(mapping)
@@ -153,35 +154,47 @@ export default function ClientesPage({ user, onToast }) {
 
   const guardarImportados = async () => {
     if (!importData || Object.keys(columnMapping).length === 0) return
-    
+
+    if (!Object.values(columnMapping).includes('nombre')) {
+      onToast('Debes mapear una columna como "Nombre" antes de importar', 'error')
+      return
+    }
+
     setImportingRows(true)
     const { rows } = importData
     let importados = 0
     let errores = 0
+    let vacias = 0
 
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i]
+      if (!row || row.every(cell => !String(cell || '').trim())) { vacias++; continue }
+
       const cliente = {
         nombre: '',
         telefono: '',
         cedula: '',
         direccion: '',
+        numero_pedido: '',
         user_id: user.id
       }
 
       Object.entries(columnMapping).forEach(([colIdx, field]) => {
-        if (row[colIdx]) cliente[field] = String(row[colIdx]).trim()
+        if (row[colIdx] !== undefined && row[colIdx] !== null && String(row[colIdx]).trim() !== '') {
+          cliente[field] = String(row[colIdx]).trim()
+        }
       })
 
-      if (!cliente.nombre) continue
+      if (!cliente.nombre) { errores++; continue }
 
       const { error } = await supabase.from('clientes').insert(cliente)
-      if (error) errores++
+      if (error) { console.error(error); errores++ }
       else importados++
     }
 
     setImportingRows(false)
-    onToast(`Importados: ${importados}, Errores: ${errores}`, importados > 0 ? 'success' : 'error')
+    const detalle = vacias > 0 ? ` (${vacias} fila${vacias !== 1 ? 's' : ''} vacía${vacias !== 1 ? 's' : ''} ignorada${vacias !== 1 ? 's' : ''})` : ''
+    onToast(`Importados: ${importados}, Errores: ${errores}${detalle}`, importados > 0 ? 'success' : 'error')
     cargarClientes()
     cerrar()
   }
@@ -594,6 +607,7 @@ export default function ClientesPage({ user, onToast }) {
                           <option value="telefono">Teléfono</option>
                           <option value="cedula">Cédula</option>
                           <option value="direccion">Dirección</option>
+                          <option value="numero_pedido">Número de pedido</option>
                         </select>
                       </th>
                     ))}
