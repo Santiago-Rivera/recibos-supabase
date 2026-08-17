@@ -33,6 +33,9 @@ export default function NuevoReciboPage({ user, onToast }) {
   const [reciboGenerado, setRecibo]   = useState(null)
   const [saving, setSaving]           = useState(false)
   const [errores, setErrores]         = useState({})
+  const [modalCliente, setModalCliente] = useState(false)
+  const [formCliente, setFormCliente] = useState({ nombre: '', telefono: '', direccion: '', cedula: '', numero_pedido: '' })
+  const [guardandoCliente, setGuardandoCliente] = useState(false)
   const [serialManual, setSerialManual] = useState(() => {
     const actual = parseInt(localStorage.getItem(SERIAL_KEY) || '0', 10)
     return `REC-${String(actual + 1).padStart(4, '0')}`
@@ -83,6 +86,39 @@ export default function NuevoReciboPage({ user, onToast }) {
     setCliente(null)
     setBusqueda('')
     setResultados([])
+  }
+
+  const abrirModalCliente = () => {
+    setFormCliente({ nombre: busqueda, telefono: '', direccion: '', cedula: '', numero_pedido: '' })
+    setModalCliente(true)
+  }
+
+  const cerrarModalCliente = () => setModalCliente(false)
+
+  const guardarNuevoCliente = async (e) => {
+    e.preventDefault()
+    if (!formCliente.nombre.trim()) return
+    setGuardandoCliente(true)
+
+    const { data, error } = await supabase.from('clientes').insert({
+      user_id: user.id,
+      nombre: formCliente.nombre.trim(),
+      telefono: formCliente.telefono.trim(),
+      direccion: formCliente.direccion.trim(),
+      cedula: formCliente.cedula.trim(),
+      numero_pedido: formCliente.numero_pedido.trim(),
+    }).select().single()
+
+    setGuardandoCliente(false)
+
+    if (error) {
+      onToast('Error al guardar cliente', 'error')
+      return
+    }
+
+    onToast('Cliente creado', 'success')
+    seleccionarCliente(data)
+    setModalCliente(false)
   }
 
   const actualizarSerial = (nuevoSerial) => {
@@ -289,7 +325,7 @@ export default function NuevoReciboPage({ user, onToast }) {
                   {searching ? (
                     <div className="search-empty"><span className="spinner dark" style={{width:14,height:14}} /></div>
                   ) : resultados.length === 0 ? (
-                    <div className="search-empty">Sin resultados. ¿Quieres <a href="#" onClick={e=>{e.preventDefault()}} style={{color:'var(--accent)'}}>crear este cliente</a>?</div>
+                    <div className="search-empty">Sin resultados. ¿Quieres <a href="#" onClick={e=>{e.preventDefault(); abrirModalCliente()}} style={{color:'var(--accent)'}}>crear este cliente</a>?</div>
                   ) : resultados.map(c => (
                     <div key={c.id} className="search-option" onClick={() => seleccionarCliente(c)}>
                       <span className="search-option-name">{c.nombre}</span>
@@ -377,6 +413,44 @@ export default function NuevoReciboPage({ user, onToast }) {
           )}
         </button>
       </form>
+
+      {modalCliente && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && cerrarModalCliente()}>
+          <div className="modal">
+            <h2 className="modal-title">Nuevo cliente</h2>
+            <form onSubmit={guardarNuevoCliente}>
+              <div className="field">
+                <label>Nombre completo *</label>
+                <input value={formCliente.nombre} onChange={e => setFormCliente(p=>({...p,nombre:e.target.value}))} placeholder="Ej: Juan Pérez" required />
+              </div>
+              <div className="grid-2">
+                <div className="field">
+                  <label>Teléfono</label>
+                  <input value={formCliente.telefono} onChange={e => setFormCliente(p=>({...p,telefono:e.target.value}))} placeholder="0999000000" />
+                </div>
+                <div className="field">
+                  <label>Cédula</label>
+                  <input value={formCliente.cedula} onChange={e => setFormCliente(p=>({...p,cedula:e.target.value}))} placeholder="1234567890" />
+                </div>
+              </div>
+              <div className="field">
+                <label>Dirección</label>
+                <input value={formCliente.direccion} onChange={e => setFormCliente(p=>({...p,direccion:e.target.value}))} placeholder="Calle, ciudad" />
+              </div>
+              <div className="field">
+                <label>Número de pedido</label>
+                <input value={formCliente.numero_pedido} onChange={e => setFormCliente(p=>({...p,numero_pedido:e.target.value}))} placeholder="N pedido" />
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="btn btn-ghost" onClick={cerrarModalCliente}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" style={{width:'auto'}} disabled={guardandoCliente}>
+                  {guardandoCliente ? <span className="spinner" /> : 'Guardar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
