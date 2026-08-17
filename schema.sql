@@ -11,6 +11,7 @@ CREATE TABLE clientes (
   telefono    TEXT,
   cedula      TEXT,
   direccion   TEXT,
+  numero_pedido TEXT,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 

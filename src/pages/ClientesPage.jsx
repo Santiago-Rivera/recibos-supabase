@@ -18,7 +18,7 @@ export default function ClientesPage({ user, onToast }) {
   const [busqueda, setBusqueda]   = useState('')
   const [modal, setModal]         = useState(null) // null | 'nuevo' | 'importar' | 'exportar' | { cliente }
   const [saving, setSaving]       = useState(false)
-  const [form, setForm]           = useState({ nombre: '', telefono: '', direccion: '', cedula: '' })
+  const [form, setForm]           = useState({ nombre: '', telefono: '', direccion: '', cedula: '', numero_pedido: '' })
   const [importData, setImportData] = useState(null)
   const [columnMapping, setColumnMapping] = useState({})
   const [importingRows, setImportingRows] = useState(false)
@@ -198,7 +198,7 @@ export default function ClientesPage({ user, onToast }) {
   }
 
   const abrirNuevo = () => {
-    setForm({ nombre: '', telefono: '', direccion: '', cedula: '' })
+    setForm({ nombre: '', telefono: '', direccion: '', cedula: '', numero_pedido: '' })
     setModal('nuevo')
   }
 
@@ -368,7 +368,7 @@ export default function ClientesPage({ user, onToast }) {
   }
 
   const abrirEditar = (c) => {
-    setForm({ nombre: c.nombre, telefono: c.telefono || '', direccion: c.direccion || '', cedula: c.cedula || '' })
+    setForm({ nombre: c.nombre, telefono: c.telefono || '', direccion: c.direccion || '', cedula: c.cedula || '', numero_pedido: c.numero_pedido || '' })
     setModal(c)
   }
 
@@ -386,6 +386,7 @@ export default function ClientesPage({ user, onToast }) {
         telefono: form.telefono.trim(),
         direccion: form.direccion.trim(),
         cedula: form.cedula.trim(),
+        numero_pedido: form.numero_pedido.trim(),
       })
       if (error) { onToast('Error al guardar cliente', 'error') }
       else { onToast('Cliente creado', 'success'); cerrar(); cargarClientes() }
@@ -396,6 +397,7 @@ export default function ClientesPage({ user, onToast }) {
           telefono: form.telefono.trim(),
           direccion: form.direccion.trim(),
           cedula: form.cedula.trim(),
+          numero_pedido: form.numero_pedido.trim(),
         })
         .eq('id', modal.id)
       if (error) { onToast('Error al actualizar', 'error') }
@@ -539,6 +541,10 @@ export default function ClientesPage({ user, onToast }) {
               <div className="field">
                 <label>Dirección</label>
                 <input value={form.direccion} onChange={e => setForm(p=>({...p,direccion:e.target.value}))} placeholder="Calle, ciudad" />
+              </div>
+              <div className="field">
+                <label>Número de pedido</label>
+                <input value={form.numero_pedido} onChange={e => setForm(p=>({...p,numero_pedido:e.target.value}))} placeholder="N pedido" />
               </div>
               <div className="modal-actions">
                 <button type="button" className="btn btn-ghost" onClick={cerrar}>Cancelar</button>
