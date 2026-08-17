@@ -23,6 +23,7 @@ export default function ClientesPage({ user, onToast }) {
   const [columnMapping, setColumnMapping] = useState({})
   const [importingRows, setImportingRows] = useState(false)
   const [exportando, setExportando] = useState(false)
+  const [eliminandoDuplicados, setEliminandoDuplicados] = useState(false)
 
   useEffect(() => { 
     if (user?.id) {
@@ -426,6 +427,40 @@ export default function ClientesPage({ user, onToast }) {
     else { onToast('Cliente eliminado'); cargarClientes() }
   }
 
+  const getDuplicados = () => {
+    const grupos = {}
+    clientes.forEach(c => {
+      const key = c.numero_pedido?.trim()
+        ? `pedido:${c.numero_pedido.trim()}`
+        : `nt:${(c.nombre || '').toLowerCase().trim()}|${(c.telefono || '').trim()}`
+      if (!grupos[key]) grupos[key] = []
+      grupos[key].push(c)
+    })
+    const idsAEliminar = []
+    Object.values(grupos).forEach(grupo => {
+      if (grupo.length > 1) {
+        // se mantiene el primero (el más antiguo), se marcan los demás
+        grupo.slice(1).forEach(c => idsAEliminar.push(c.id))
+      }
+    })
+    return idsAEliminar
+  }
+
+  const eliminarDuplicados = async () => {
+    const idsAEliminar = getDuplicados()
+    if (idsAEliminar.length === 0) {
+      onToast('No se encontraron clientes duplicados', 'success')
+      return
+    }
+    if (!confirm(`Se eliminarán ${idsAEliminar.length} cliente${idsAEliminar.length !== 1 ? 's' : ''} duplicado${idsAEliminar.length !== 1 ? 's' : ''} (se conserva el registro más antiguo de cada grupo). ¿Continuar?`)) return
+
+    setEliminandoDuplicados(true)
+    const { error } = await supabase.from('clientes').delete().in('id', idsAEliminar)
+    setEliminandoDuplicados(false)
+    if (error) onToast('Error al eliminar duplicados', 'error')
+    else { onToast(`${idsAEliminar.length} duplicado${idsAEliminar.length !== 1 ? 's' : ''} eliminado${idsAEliminar.length !== 1 ? 's' : ''}`, 'success'); cargarClientes() }
+  }
+
   const filtrados = clientes.filter(c => {
     if (!busqueda.trim()) return true
     const busquedaLower = busqueda.toLowerCase().trim()
@@ -452,6 +487,10 @@ export default function ClientesPage({ user, onToast }) {
           <button className="btn btn-primary" style={{width:'auto'}} onClick={abrirImportar}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Importar clientes
+          </button>
+          <button className="btn btn-ghost" style={{width:'auto', color: 'var(--danger)'}} onClick={eliminarDuplicados} disabled={eliminandoDuplicados || clientes.length === 0}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            {eliminandoDuplicados ? 'Eliminando...' : 'Eliminar duplicados'}
           </button>
           <button className="btn btn-primary" style={{width:'auto'}} onClick={abrirNuevo}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
